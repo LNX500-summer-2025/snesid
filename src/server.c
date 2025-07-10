@@ -25,7 +25,7 @@ int serverInit( void ) {
     unlink( serverSocketPath );
     memset( &serverSockAddr, 0, sizeof( struct sockaddr_un ) );
 
-    strncpy( serverSockAddr.sun_path, serverSocketPath, strlen( serverSocketPath ) );
+    strncpy( serverSockAddr.sun_path, serverSocketPath, strlen( serverSocketPath ) + 1 );
     serverSockAddr.sun_family = AF_UNIX;
 
     checkError( bind, bind( serverFd, ( const struct sockaddr* ) &serverSockAddr, sizeof( struct sockaddr_un ) ) != 0 );
@@ -43,7 +43,7 @@ int serverClose( void ) {
         pthread_mutex_unlock( &runFlagMutex );
         pthread_join( serverThreadHandle, NULL );
         
-        serverThreadHandle = NULL;
+        serverThreadHandle = 0;
     }
 
     if ( serverFd ) {
