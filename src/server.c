@@ -5,13 +5,17 @@
 #include <poll.h>
 #include "main.h"
 
+#ifndef POLL_IN
+#define POLL_IN POLLIN 
+#endif
+
 static void serverThreadProc( void* param );
 static void clientThreadProc( void* param );
 
 static const char* serverSocketPath = config_Server_Socket_Path;
 static int serverFd = -1;
 
-static pthread_t serverThreadHandle = NULL;
+static pthread_t serverThreadHandle = 0;
 
 int serverInit( void ) {
     struct sockaddr_un serverSockAddr;
@@ -52,7 +56,7 @@ int serverClose( void ) {
 }
 
 static void serverThreadProc( void* param ) {
-    pthread_t clientThreadHandle = NULL;
+    pthread_t clientThreadHandle = 0;
     struct pollfd fdes;
     int clientFd = -1;
     int run = 0;
