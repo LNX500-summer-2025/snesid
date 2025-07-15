@@ -12,31 +12,25 @@
 static void signalHandler( int signal );
 static void cleanup( void );
 
-pthread_mutex_t runFlagMutex = PTHREAD_MUTEX_INITIALIZER;
-int runFlag = 1;
+volatile sig_atomic_t runFlag = 1;
 
 int main( void ) {
-    int run = 0;
-
     signal( SIGINT, signalHandler );
     signal( SIGQUIT, signalHandler );
 
     atexit( cleanup );
 
-    pthread_mutex_init( &runFlagMutex, NULL );
-    
-    if ( serverInit( ) == 0 ) {
+    if ( controllerInit( ) == 0 && serverInit( ) == 0 ) {
+        printf( "Entering main loop\n" );
+        
         runFlag = 1;
 
         do {
-            pthread_mutex_lock( &runFlagMutex );
-                run = runFlag;
-            pthread_mutex_unlock( &runFlagMutex );
-
-            usleep( 1000 );            
-        } while ( run );
+            serverTick( );   
+        } while ( runFlag );
 
         serverClose( );
+        controllerClose( );
     }
 
     printf( "Bye!\n" );
@@ -46,11 +40,9 @@ int main( void ) {
 
 static void cleanup( void ) {
     serverClose( );
-    pthread_mutex_destroy( &runFlagMutex );
+    controllerClose( );
 }
 
 static void signalHandler( int signal ) {
-    pthread_mutex_lock( &runFlagMutex );
-        runFlag = 0;
-    pthread_mutex_unlock( &runFlagMutex );
+    runFlag = 0;
 }

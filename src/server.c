@@ -9,13 +9,10 @@
 #define POLL_IN POLLIN 
 #endif
 
-static void serverThreadProc( void* param );
 static void clientThreadProc( void* param );
 
 static const char* serverSocketPath = config_Server_Socket_Path;
 static int serverFd = -1;
-
-static pthread_t serverThreadHandle = 0;
 
 int serverInit( void ) {
     struct sockaddr_un serverSockAddr;
@@ -31,21 +28,10 @@ int serverInit( void ) {
     checkError( bind, bind( serverFd, ( const struct sockaddr* ) &serverSockAddr, sizeof( struct sockaddr_un ) ) != 0 );
     checkError( listen, listen( serverFd, config_Server_Backlog ) != 0 );
 
-    checkError( pthread_create, pthread_create( &serverThreadHandle, NULL, ( void* ) serverThreadProc, NULL ) != 0 );
-
     return 0;
 }
 
 int serverClose( void ) {
-    if ( serverThreadHandle ) {
-        pthread_mutex_lock( &runFlagMutex );
-            runFlag = 0;
-        pthread_mutex_unlock( &runFlagMutex );
-        pthread_join( serverThreadHandle, NULL );
-        
-        serverThreadHandle = 0;
-    }
-
     if ( serverFd ) {
         close( serverFd );
         serverFd = -1;
@@ -55,51 +41,52 @@ int serverClose( void ) {
     return 0;
 }
 
-static void serverThreadProc( void* param ) {
+/// @brief Runs one tick of the server
+/// @param  
+/// @return 1 If a client thread was created this tick
+int serverTick( void ) {
     pthread_t clientThreadHandle = 0;
     struct pollfd fdes;
     int clientFd = -1;
-    int run = 0;
     int res = 0;
     int* ptr = NULL;
 
-    printf( "Entered server thread\n" );
+    fdes.events = POLL_IN;
+    fdes.revents = 0;
+    fdes.fd = serverFd;
 
-    do {
-        fdes.events = POLL_IN;
-        fdes.revents = 0;
-        fdes.fd = serverFd;
+    if ( ( res = poll( &fdes, 1, config_Server_Poll_Timeout ) ) > 0 ) {
+        if ( fdes.revents & POLL_IN ) {
+            // New socket is available
+            if ( ( clientFd = accept( serverFd, NULL, NULL ) ) >= 0 ) {
+                printf( "Client connected\n" );
 
-        if ( ( res = poll( &fdes, serverFd + 1, config_Server_Poll_Timeout ) ) > 0 ) {
-            if ( fdes.revents & POLL_IN ) {
-                // New socket is available
-                if ( ( clientFd = accept( serverFd, NULL, NULL ) ) >= 0 ) {
-                    printf( "Client connected\n" );
+                if ( ( ptr = ( int* ) malloc( sizeof( int ) ) ) != NULL ) {
+                    *ptr = clientFd;
 
-                    if ( ( ptr = ( int* ) malloc( sizeof( int ) ) ) != NULL ) {
-                        *ptr = clientFd;
+                    checkError( pthread_create, pthread_create( &clientThreadHandle, NULL, ( void* ) clientThreadProc, ( void* ) ptr ) != 0 );
+                    checkError( pthread_detach, pthread_detach( clientThreadHandle ) != 0 );
 
-                        checkError( pthread_create, pthread_create( &clientThreadHandle, NULL, ( void* ) clientThreadProc, ( void* ) ptr ) != 0 );
-                        checkError( pthread_detach, pthread_detach( clientThreadHandle ) != 0 );
-                    }else {
-                        close( clientFd );
-                    }
+                    return 1;
+                } else {
+                    close( clientFd );
                 }
             }
         }
+    }
 
-        pthread_mutex_lock( &runFlagMutex );
-            run = runFlag;
-        pthread_mutex_unlock( &runFlagMutex );
-    } while ( run );
-
-    printf( "Leaving server thread\n" );
+    return 0;
 }
 
 static void clientThreadProc( void* param ) {
     uint16_t state = 0;
     int clientFd = -1;
-    int run = 1;
+    uint8_t data = 0;
+    uint8_t lo = 0;
+    uint8_t hi = 0;
+    uint8_t buf[ 2 ];
+    struct pollfd fdes;
+    int res = 0;
 
     printf( "Entered client thread\n" );
 
@@ -107,20 +94,38 @@ static void clientThreadProc( void* param ) {
         clientFd = *( ( int* ) param );
         free( param );
 
-        // TODO:
-        // This still runs when the client quits
         do {
-            pthread_mutex_lock( &runFlagMutex );
-                run = runFlag;
-            pthread_mutex_unlock( &runFlagMutex );
+            fdes.events = POLL_IN;
+            fdes.revents = 0;
+            fdes.fd = clientFd;
 
-            state = controllerState( );
+            if ( poll( &fdes, 1, config_Server_Poll_Timeout ) > 0 ) {
+                if ( read( clientFd, &data, 1 ) != 1 )
+                    break;
 
-            run = ( write( clientFd, &state, sizeof( uint16_t ) ) == sizeof( uint16_t ) ) ? run : 0;
-        } while ( run );
+                if ( data == 0x20 ) {
+                    state = controllerState( );
+
+                    hi = ( state >> 8 ) & 0xFF;
+                    lo = ( state & 0xFF );
+
+                    buf[ 0 ] = lo;
+                    buf[ 1 ] = hi;
+
+                    res = write( clientFd, buf, 2 );
+
+                    //res = write( clientFd, &lo, 1 );
+                    //res+= write( clientFd, &hi, 1 );
+
+                    if ( res != 2 )
+                        break;
+                }
+            }
+        } while ( runFlag );
 
         close( clientFd );
     }
 
     printf( "Leaving client thread\n" );
+    pthread_exit( NULL );
 }
